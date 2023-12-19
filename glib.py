@@ -14,8 +14,8 @@ from resizeimage import resizeimage
 
 # SM Jumpstart Consts
 region_name = "us-west-2"
-storage_bucket = "your-s3-storage"
-sm_sdxl_ep = "sdxl-jumpstart"
+storage_bucket = "perth-recap-mugshots"
+sm_sdxl_ep = "sdxl-1-0-jumpstart-2023-12-06-03-16-48-040"
 
 # Bedrock Consts
 endpoint_url = "bedrock-endpoint-url"
@@ -33,24 +33,24 @@ def uploadFileToS3(fileName, fileBytes):
     s3.upload_fileobj(io.BytesIO(fileBytes), storage_bucket, fileName)
 
 # Request for an image from SDXL given a text-prompt
-def smjs_create_img_from_prompt(text):
-    session = boto3.session.Session()
-    deployed_model = StabilityPredictor(endpoint_name=sm_sdxl_ep, 
-                                        sagemaker_session=sagemaker.Session(boto_session=session))
-    output_img = deployed_model.predict(GenerationRequest(text_prompts=[TextPrompt(text=text)],
-                                        style_preset="cinematic", seed = 3))
-    return output_img
+# def smjs_create_img_from_prompt(text):
+#     session = boto3.session.Session()
+#     deployed_model = StabilityPredictor(endpoint_name=sm_sdxl_ep, 
+#                                         sagemaker_session=sagemaker.Session(boto_session=session))
+#     output_img = deployed_model.predict(GenerationRequest(text_prompts=[TextPrompt(text=text)],
+#                                         style_preset="cinematic", seed = 3))
+#     return output_img
 
-def smjs_create_img_from_img_and_prompt(text, image, slider):
-    strength = 0.5 + (slider / 100)*(0.45)
-    session = boto3.session.Session()
-    deployed_model = StabilityPredictor(endpoint_name=sm_sdxl_ep, 
-                                        sagemaker_session=sagemaker.Session(boto_session=session))
-    img = deployed_model.predict(GenerationRequest(text_prompts=[TextPrompt(text=text)],
-                                        init_image=image,
-                                        cfg_scale=9,
-                                        image_strength=strength,
-                                        seed=42))
+# def smjs_create_img_from_img_and_prompt(text, image, slider):
+#     strength = 0.5 + (slider / 100)*(0.45)
+#     session = boto3.session.Session()
+#     deployed_model = StabilityPredictor(endpoint_name=sm_sdxl_ep, 
+#                                         sagemaker_session=sagemaker.Session(boto_session=session))
+#     img = deployed_model.predict(GenerationRequest(text_prompts=[TextPrompt(text=text)],
+#                                         init_image=image,
+#                                         cfg_scale=9,
+#                                         image_strength=strength,
+#                                         seed=42))
     return img
 
 # Extract the image out from the response
@@ -88,33 +88,34 @@ def prepare_image_for_endpoint(image_bytes):
 
 def get_stability_ai_response_image(response):
     response = json.loads(response.get('body').read())
-    images = response.get('artifacts')
-    image_data = base64.b64decode(images[0].get('base64'))
+    image_data = base64.b64decode(response["artifacts"][0]["base64"])
     return BytesIO(image_data)
 
-def get_altered_image_from_model(prompt_content, image_bytes, img_strength):
+def get_altered_image_from_model(prompt_content, image_bytes, img_strength, seed, style_preset):
     if image_bytes is None:
-        img = smjs_create_img_from_prompt(prompt_content)
-        return decode_image(img)
+        #img = smjs_create_img_from_prompt(prompt_content)
+        img = bedrock_create_img_from_img_and_prompt(prompt_content, None, 80, seed, style_preset)
+        return img
     else:
         img_str = prepare_image_for_endpoint(image_bytes)
-        img = smjs_create_img_from_img_and_prompt(prompt_content, img_str, img_strength)
-        return decode_image(img)
+        #img = smjs_create_img_from_img_and_prompt(prompt_content, img_str, img_strength)
+        img = bedrock_create_img_from_img_and_prompt(prompt_content, img_str, img_strength, seed, style_preset)
+        return img
 
-def get_stability_ai_request_body(prompt, image_str = None):
+def get_stability_ai_request_body(prompt, strength, image_str = None, seed=0, style_preset=''):
     # see https://platform.stability.ai/docs/features/api-parameters
-    body = {"text_prompts": [ {"text": prompt } ], "cfg_scale": 9, "steps": 50, }
+    strength = (strength/100)
+    body = {"text_prompts": [{"text": prompt}],"cfg_scale":12, "image_strength": strength, "seed": seed, "style_preset": style_preset, "steps":50}
+    print(body)
     if image_str:
         body["init_image"] = image_str
+    #    body["start_schedule"] = 0.8
+    #    body["stop_schedule"] = 0.8
     return json.dumps(body)
 
-def bedrock_create_img_from_img_and_prompt (text, image):
-    body = get_stability_ai_request_body(text, image)
-    session = boto3.session.Session()
-    bedrock = session.client(service_name='bedrock', region_name=region_name,
-                             endpoint_url=endpoint_url) 
-    response = bedrock.invoke_model(body=body, modelId=bedrock_model_id, 
-                                    contentType="application/json",
-                                    accept="application/json")
+def bedrock_create_img_from_img_and_prompt (text, image, strength, seed, style_preset):
+    body = get_stability_ai_request_body(text, strength, image, seed, style_preset)
+    bedrock = boto3.client(service_name='bedrock-runtime', region_name=region_name)
+    response = bedrock.invoke_model(body=body, modelId="stability.stable-diffusion-xl-v1", contentType="application/json", accept="application/json")
     output = get_stability_ai_response_image(response)
     return output
