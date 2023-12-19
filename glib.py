@@ -51,7 +51,7 @@ def uploadFileToS3(fileName, fileBytes):
 #                                         cfg_scale=9,
 #                                         image_strength=strength,
 #                                         seed=42))
-    return img
+    # return img
 
 # Extract the image out from the response
 def decode_image(model_response: GenerationResponse):
